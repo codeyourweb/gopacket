@@ -15,8 +15,10 @@ import (
 	"bytes"
 	"encoding/binary"
 	"errors"
+	"fmt"
 	"log"
 	"net"
+	"strings"
 	"sync"
 	"time"
 
@@ -32,13 +34,19 @@ func main() {
 		panic(err)
 	}
 
+	// Get a list of all devices
+	devices, err := pcap.FindAllDevs()
+	if err != nil {
+		panic(err)
+	}
+
 	var wg sync.WaitGroup
 	for _, iface := range ifaces {
 		wg.Add(1)
 		// Start up a scan on each interface.
 		go func(iface net.Interface) {
 			defer wg.Done()
-			if err := scan(&iface); err != nil {
+			if err := scan(&iface, &devices); err != nil {
 				log.Printf("interface %v: %v", iface.Name, err)
 			}
 		}(iface)
@@ -53,7 +61,7 @@ func main() {
 //
 // scan loops forever, sending packets out regularly.  It returns an error if
 // it's ever unable to write a packet.
-func scan(iface *net.Interface) error {
+func scan(iface *net.Interface, devices *[]pcap.Interface) error {
 	// We just look for IPv4 addresses, so try to find if the interface has one.
 	var addr *net.IPNet
 	if addrs, err := iface.Addrs(); err != nil {
@@ -81,8 +89,20 @@ func scan(iface *net.Interface) error {
 	}
 	log.Printf("Using network range %v for interface %v", addr, iface.Name)
 
+	// Try to find a match between device and interface
+	var deviceName string
+	for _, d := range *devices {
+		if strings.Contains(fmt.Sprint(d.Addresses), fmt.Sprint(addr.IP)) {
+			deviceName = d.Name
+		}
+	}
+
+	if deviceName == "" {
+		return fmt.Errorf("Cannot find the corresponding device for the interface %s", iface.Name)
+	}
+
 	// Open up a pcap handle for packet reads/writes.
-	handle, err := pcap.OpenLive(iface.Name, 65536, true, pcap.BlockForever)
+	handle, err := pcap.OpenLive(deviceName, 65536, true, pcap.BlockForever)
 	if err != nil {
 		return err
 	}
